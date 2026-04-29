@@ -94,6 +94,11 @@ void ConvexBaseTpl<IndexType>::buildSupportPointCache() {
     return;
   }
 
+  COAL_ASSERT(points->size() == num_points,
+              "The number of points is not consistent with the size of the "
+              "points vector",
+              std::logic_error);
+
   support_points_x.reset(new std::vector<Scalar>(num_points));
   support_points_y.reset(new std::vector<Scalar>(num_points));
   support_points_z.reset(new std::vector<Scalar>(num_points));

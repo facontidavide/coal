@@ -232,7 +232,7 @@ if(COAL_ENABLE_SIMD AND COAL_ENABLE_NATIVE_SIMD_FLAGS AND NOT MSVC)
 
   if(COAL_ENABLE_NO_SEMANTIC_INTERPOSITION
      AND CMAKE_CXX_COMPILER_ID MATCHES "^(GNU|Clang|AppleClang)$")
-    target_compile_options(${LIBRARY_NAME} PUBLIC -fno-semantic-interposition)
+    target_compile_options(${LIBRARY_NAME} PRIVATE -fno-semantic-interposition)
     message(STATUS "Coal native SIMD codegen flags: -fno-semantic-interposition")
   endif()
 endif()
