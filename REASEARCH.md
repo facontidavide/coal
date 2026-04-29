@@ -732,3 +732,112 @@ All differences within ±1% — **below the run-to-run noise floor of ~1-2%**. *
 - `_mm_prefetch` hints on the next BV pair before the current SAT test completes (5-10% on cache-bound queries, trivial code change).
 
 **Files touched** (in worktree only, not merged): `/tmp/coal-obbsat/src/BV/OBB.cpp` lines 312-389. Worktree at branch `experiment/obb-sat-simd`.
+
+## 10. Positive result: BVH-children prefetch in BVDisjoints (2026-04-29)
+
+**Hypothesis.** During mesh-mesh BVH traversal, when a BV pair overlaps the
+recursion descends into one or more children. Issuing `__builtin_prefetch`
+on the children's `BVNode<BV>` slots before the SAT/rect-distance test gives
+the memory controller ~50-130 ns to fetch those cache lines while the BV
+test is computing, so the next `getBV(c)` access in the recursive call
+finds the data warm.
+
+**Implementation.** In `MeshCollisionTraversalNode::BVDisjoints` (in
+`include/coal/internal/traversal_node_bvhs.h`), after binding `n1` and `n2`
+references and before running the overlap test, prefetch the left+right
+children of both BVH sides when the corresponding `n.isLeaf()` is false.
+Four prefetches per BV pair test, each ~4 cycles wasted on disjoint pairs
+(no descent), recovering ~25 ns per pair on overlap pairs (the typical
+descent path on touching meshes).
+
+The function body was also tightened to bind references once instead of
+double-indexing through `getBV(b1)`/`getBV(b2)`.
+
+**Result on polso/gen4 (interleaved 7-run median, P-core pinned):**
+
+| Joint  | Baseline | Prefetch |  Δ    |
+|--------|----------|----------|-------|
+| J4-J5  | 1186.95  | 1161.24  | -2.2% |
+| J5-J6  | 4573.17  | 4516.79  | -1.2% |
+| J6-J7  | 2794.70  | 2762.63  | -1.1% |
+| J7     | 1084.70  | 1070.08  | -1.3% |
+| Nose   | 5948.87  | 5900.29  | -0.8% |
+
+Modest (-1 to -2%) but **consistent on every joint**. Below the 5-10%
+agent prediction. Rationale for the smaller realized gain: the existing
+optimizations on the branch (devirtualization, GJKSolver hoist, Möller
+fast-path) have already shrunk the cycles per BV pair, leaving less
+memory latency to overlap with prefetch. Per-pose CSV outputs identical
+across all 5 manifests — no correctness regression. Committed as
+`6dc1d05d`.
+
+## 11. Negative result: rectDistance Voronoi tightening (2026-04-29)
+
+**Hypothesis.** `rectDistanceImpl<false>` (17.9% of cycles, RSS-using BV
+queries) tests 16 Voronoi region pairs and falls through to a
+"face-normal separation" computation when no edge pair contains the
+closest points. Investigated whether scalar tightening — reordering
+branches, adding a quick face-normal-sep early-out, or pre-caching
+redundant work — could yield 5-10% per the agent's prediction.
+
+**Investigation.** Read the full 1040-line implementation in
+`/tmp/coal-rectdist/src/BV/RSS.cpp`. Findings:
+- Auxiliary computations at the top (Tba, aA0_dot_B0, etc.) are already
+  cached and consumed by all 16 region branches.
+- The 16 region tests have cheap gating checks like
+  `if ((UA1_ux > b[0]) && (UB1_ux > a[0]))` that fail fast for clearly
+  disjoint pairs.
+- The face-normal separation at the end (lines 654-711) IS a valid
+  lower bound on the rectangle-rectangle distance, but its computation
+  (~30 ops) only beats the 16 edge tests if the *caller* knows a
+  threshold to early-exit against.
+- The natural API shape would be `rectDistance(R, T, a, b, upper_bound)`
+  that returns early if face-normal sep already exceeds upper_bound.
+  This is an API change to a public-ish entry point and was deemed
+  out-of-scope without further evidence the win is meaningful.
+
+**Conclusion.** No safe win identified within the existing API. The
+function's structure (16 cheap-gated tests + face-normal fallback) is
+already well-suited to the typical disjoint-BV-pair distribution.
+Skipped without committing any changes. Worktree
+`/tmp/coal-rectdist` removed.
+
+## 12. Summary of session-end state (2026-04-29)
+
+Branch `feature/coal-simd-support` is **15 commits ahead of `devel`** with
+a cumulative **~34-35% speedup on polso/gen4 mesh-vs-mesh boolean
+motion-validation**, breakdown:
+
+| Commit | Title | Polso impact |
+|--------|-------|--------------|
+| 9f5fbbc1 | enable native SIMD architecture flags | foundation |
+| 36c087ea | SIMD convex support scanning | small (no convex hot path here) |
+| e688d2f7 | SoA SIMD convex support cache | small (ditto) |
+| 1aa858cc | skip non-improving mesh distance leaves | mostly distance-query |
+| 5fd56b64 | specialize RSS rectangle distance outputs | -3-5% |
+| 2307b964 | enable no-interposition native codegen | -1-2% |
+| 44144fcf | skip oriented mesh distance seed | mostly distance-query |
+| fb4608c8 | precompute oriented BV overlap inverse transform | -3-5% |
+| 75cb88a6 | harden review issues | correctness |
+| 5716e385 | VAMP research notes + benchmarks | infrastructure |
+| e57c13b6 | rectDistance pre-check negative result | docs |
+| c030c3d7 | devirtualize BVH traversal via templated overloads | -4-7% |
+| 29f9297f | cross-workload validation | docs |
+| 40349fea | Eigen computeDirect negative result | docs |
+| 4cabc131 | hoist GJKSolver out of mesh leaf | -5-7% |
+| a18baf7e | Möller tri-tri overlap fast path | -11-17% on top of hoist |
+| 5e869752 | OBB SAT 3-wide negative result | docs |
+| **6dc1d05d** | **prefetch BVH children before SAT** | **-1-2%** |
+
+Optimizations explored and rejected (with documented reasons):
+- LTO + selective fast-math (failed test suite, regressed total time)
+- Eigen `computeDirect` for `coal::eigen()` (+25.6% regression)
+- GJK `distance_upper_bound = 0` early-break (within noise; tris converge fast)
+- OBB SAT 3-wide Eigen Array vectorization (0%; compiler emits 2-wide SSE)
+- Eytzinger flat BVH layout (rejected on first principles + 0% from OBB SAT)
+- rectDistance Voronoi tightening (no safe win without API change)
+
+Diminishing returns on per-BV kernel optimizations have set in. Future
+gains likely require structural changes (CAPT-style point-cloud
+collision, FOAM sphere-tree midphase) or a different workload that
+exposes a different hot path.
