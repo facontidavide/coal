@@ -425,6 +425,60 @@ Tooling added (committed):
 - `test/benchmark_phases.cpp` → `coal-test-benchmark-phases` — operation-count and per-workload timings, with `enable_statistics`.
 - `test/benchmark_bv_micro.cpp` → `coal-test-benchmark-bv-micro` — per-call BV-overlap micro-benchmark with controlled input distributions.
 
+#### Perf profile of existing benchmark — 2026-04-29
+
+`perf record -F 4000 -g --call-graph dwarf` finally available (kernel.perf_event_paranoid=1). Top symbols by self-time over the entire benchmark run (including BVH build + queries):
+
+| % self | symbol | phase |
+|-------:|--------|-------|
+| 14.15% | `coal::rectDistanceImpl<false>` | query (RSS BV test) |
+| 13.36% | `coal::eigen<...>` (3×3 SVD) | BVH build |
+| 10.14% | `coal::obbDisjointAndLowerBoundDistance` | query (OBB SAT) |
+| 7.41%  | `getRadiusAndOriginAndRectangleSize` | BVH build (RSS fitter) |
+| 5.19%  | `coal::collisionRecurse` | query (traversal) |
+| 3.84%  | `getCovariance` | BVH build |
+| 2.70%  | `getExtentAndCenter_mesh` | BVH build |
+| 1.65%  | `overlapPrecomputedRTranspose<OBB>` | query (BV thunk) |
+| 1.42%  | `overlapPrecomputedRTranspose<kIOS>` | query (BV thunk) |
+| 1.41%  | `coal::distance(R0,T0,RSS,RSS,P,Q)` | query (RSS distance variant) |
+
+Key facts the profile establishes:
+- **BVH build is ~30% of benchmark runtime.** The benchmark builds 12 (BV × split) trees at startup; queries are the rest.
+- **Within the query budget** (~70%), the per-call BV-overlap functions sum to ~28%. The recursive traversal infrastructure adds ~5-7%. Result update/object housekeeping is the rest.
+- **`collisionRecurse` does 9 virtual calls per BVH node pair tested.** Devirtualization is the most promising single optimization left, but it is a non-trivial refactor across the traversal-node hierarchy.
+
+#### Attempted optimization — `rectDistance` face-normal pre-check — 2026-04-29
+
+**Hypothesis:** add a cheap (~10 ns) face-normal SAT lower-bound at the top of `RSS::overlap` and `overlapPrecomputedRTranspose<RSS>`. For pairs clearly disjoint along either rectangle's z-axis, return the lower bound immediately and skip `rectDistance`'s 16 Voronoi-region search (~50-90 ns).
+
+**Result:**
+
+| Workload                       | BASE (µs) | NEW (µs) | Δ      |
+|--------------------------------|----------:|---------:|-------:|
+| Main benchmark (median, 6 rds) | 46176     | 45830    | −0.7%  |
+| env-vs-rob wide RSS collide    | 2724      | 2598     | −4.6%  |
+| env-vs-rob med RSS collide     | 2225      | 2198     | −1.2%  |
+| env-vs-rob near RSS collide    | 2160      | 2120     | −1.8%  |
+| **rob-vs-rob 100 RSS collide** | 7764      | 8106     | **+4.4%** |
+| **rob-vs-rob 300 RSS collide** | 7910      | 8326     | **+5.3%** |
+| **rob-vs-rob 600 RSS collide** | 7625      | 7995     | **+4.9%** |
+| **synthetic dense soup RSS coll** | 1986   | 2166     | **+9.1%** |
+| **pathological self-vs-self RSS coll** | 271 | 284     | **+5.0%** |
+| rob-vs-rob 300 kIOS distance   | 812       | 676      | −16.8% |
+| BV-micro RSS te=20 (disjoint)  | 56 ns     | 42 ns    | −25.0% |
+| BV-micro RSS te=0.5 (overlap)  | 95 ns     | 90 ns    | −5.3%  |
+
+**Diagnosis:** the pre-check costs ~10 ns when it FAILS. In broad-phase workloads (env-vs-rob), most pairs are far-disjoint and the pre-check succeeds → saves ~50 ns. In narrow-phase workloads (rob-vs-rob, synthetic dense), most pairs are in the overlap regime where the pre-check fails → wasted overhead of ~10 ns × ~6 BV tests/query = ~60 ns/query that compound to +4-9% across thousands of calls.
+
+**Decision: NOT ADOPTED.** Workload-dependent: helps the broad-phase benchmark by 1-5% but regresses the narrow-phase workloads by 4-9%. Reverted in working tree. The lesson: any pre-filter must be either *cheaper than ~5 ns* or *only applied conditionally* — neither is straightforward for `rectDistance`.
+
+#### Net status as of 2026-04-29
+
+- **No optimization has been adopted in this round.** The `feature/coal-simd-support` branch is unchanged from `5716e385` (research notes + benchmark infrastructure).
+- E4 (LTO + fast-math): tested 6 configurations, none beat baseline; LTO regresses 12%.
+- `rectDistance` face-normal pre-check (this round): wins broad-phase, regresses narrow-phase, net non-positive.
+- The remaining well-aimed candidate is **CRTP/template devirtualization of `collisionRecurse`** (5.2% of runtime is in the recursive driver, with 9 virtual calls per node-pair). This is the only optimization the profile suggests has clear headroom without workload-dependent regressions.
+
 ---
 
 ### E5 — Vectorized convex hill-climb (`getShapeSupportLog`)
