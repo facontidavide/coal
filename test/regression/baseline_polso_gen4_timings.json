@@ -1,0 +1,28 @@
+{
+  "_comment": "Layer C performance regression baseline. Captured from feature/coal-simd-support HEAD on 2026-04-29 with the dev hardware below. Numbers are median of 11 runs, P-core pinned. The test passes if the current build's median is within (1+tolerance_pct/100) of the stored median. Skipped silently on different machine_class. See test/regression/README.md for regen.",
+  "machine_class": "13th-gen-Intel-i7-13700H-P-core-pinned",
+  "build_flags": "-O3 -march=native -DNDEBUG -fno-semantic-interposition",
+  "dataset": "polso/gen4 mesh-vs-mesh, NO_REQUEST flag, 10000 random poses (seed 42)",
+  "joints": {
+    "J4-J5": {
+      "median_ns": 1165.2,
+      "tolerance_pct": 5
+    },
+    "J5-J6": {
+      "median_ns": 4521.54,
+      "tolerance_pct": 5
+    },
+    "J6-J7": {
+      "median_ns": 2753.65,
+      "tolerance_pct": 5
+    },
+    "J7": {
+      "median_ns": 1068.73,
+      "tolerance_pct": 5
+    },
+    "Nose": {
+      "median_ns": 5902.05,
+      "tolerance_pct": 5
+    }
+  }
+}
