@@ -450,7 +450,7 @@ class MeshDistanceTraversalNode : public BVHDistanceTraversalNode<BV> {
     const Vec3s& t23 = vertices2[tri_id2[2]];
 
     // nearest point pair
-    Vec3s P1, P2, normal;
+    Vec3s P1, P2, normal(Vec3s::Zero());
 
     Scalar d2;
     if (RTIsIdentity)
@@ -459,6 +459,12 @@ class MeshDistanceTraversalNode : public BVHDistanceTraversalNode<BV> {
     else
       d2 = TriangleDistance::sqrTriDistance(t11, t12, t13, t21, t22, t23,
                                             RT._R(), RT._T(), P1, P2);
+
+    const Scalar min_distance = this->result->min_distance;
+    if (d2 >= min_distance * min_distance) {
+      return;
+    }
+
     Scalar d = sqrt(d2);
 
     this->result->update(d, this->model1, this->model2, primitive_id1,
@@ -502,7 +508,7 @@ class MeshDistanceTraversalNode : public BVHDistanceTraversalNode<BV> {
     init_tri2_points[1] = vertices2[init_tri2[1]];
     init_tri2_points[2] = vertices2[init_tri2[2]];
 
-    Vec3s p1, p2, normal;
+    Vec3s p1, p2, normal(Vec3s::Zero());
     Scalar distance = sqrt(TriangleDistance::sqrTriDistance(
         init_tri1_points[0], init_tri1_points[1], init_tri1_points[2],
         init_tri2_points[0], init_tri2_points[1], init_tri2_points[2], RT._R(),
