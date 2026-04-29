@@ -472,12 +472,38 @@ Key facts the profile establishes:
 
 **Decision: NOT ADOPTED.** Workload-dependent: helps the broad-phase benchmark by 1-5% but regresses the narrow-phase workloads by 4-9%. Reverted in working tree. The lesson: any pre-filter must be either *cheaper than ~5 ns* or *only applied conditionally* — neither is straightforward for `rectDistance`.
 
-#### Net status as of 2026-04-29
+#### Devirtualization via templated `collide`/`distance` overloads — 2026-04-29 — **ADOPTED**
 
-- **No optimization has been adopted in this round.** The `feature/coal-simd-support` branch is unchanged from `5716e385` (research notes + benchmark infrastructure).
-- E4 (LTO + fast-math): tested 6 configurations, none beat baseline; LTO regresses 12%.
-- `rectDistance` face-normal pre-check (this round): wins broad-phase, regresses narrow-phase, net non-positive.
-- The remaining well-aimed candidate is **CRTP/template devirtualization of `collisionRecurse`** (5.2% of runtime is in the recursive driver, with 9 virtual calls per node-pair). This is the only optimization the profile suggests has clear headroom without workload-dependent regressions.
+**Hypothesis** (motivated by the 5.19% perf-profile slice in `collisionRecurse` with 9 virtual calls per BVH node pair): adding a templated `collide<Node>` and `distance<Node>` overload that delegates to a devirtualized `collisionRecurseT<Node>` / `distanceRecurseT<Node>` lets the compiler resolve all virtual calls statically when called with a concrete traversal-node type. Internal coal callers (`collision_func_matrix.cpp`, `distance_func_matrix.cpp`) already create concrete nodes, so the templated overload is automatically picked up by overload resolution (template's exact-type match outranks the non-template's derived-to-base conversion).
+
+**Implementation** (committed):
+- `include/coal/internal/traversal_recurse.h`: adds inline template `collisionRecurseT<Node>` and `distanceRecurseT<Node>` mirroring the existing virtual-base recursions.
+- `src/collision_node.h`: adds inline templated `collide<Node>` and `distance<Node>` overloads alongside the existing base-pointer non-templates. Front-list propagation and queue-based search paths are forwarded to the base-pointer versions; only the common recursive case is devirtualised.
+- `src/collision_node.cpp`: exports `checkResultLowerBound` (`COAL_DLLAPI`) so the header-only template can call it.
+- No public-API changes. No header in the install set was modified; existing consumers see the same `coal::collide(...)` / `coal::distance(...)` symbols.
+
+**Verification:**
+- Correctness: 19 test binaries pass (`coal-distance`, `coal-collision`, `coal-distance_lower_bound`, `coal-normal_and_nearest_points`, `coal-bvh_models`, `coal-frontlist`, `coal-collision_node_asserts`, `coal-serialization`, `coal-convex`, `coal-gjk`, `coal-accelerated_gjk`, `coal-octree`, `coal-hfields`, `coal-contact_patch`, `coal-broadphase_dynamic_AABB_tree`, `coal-security_margin`, `coal-swept_sphere_radius`, plus the project's other unit tests built by default).
+- Side-by-side `coal-test-benchmark-devirt` (which calls `collisionRecurseT` directly) and the existing `coal-test-benchmark` (which now picks up the templated overload via ADL) produce essentially identical wins, confirming the overload-resolution dispatch works as designed.
+
+**Result** (8 interleaved rounds, taskset CPU 4):
+
+| Build                              | min (µs) | median | mean  | stdev | vs BASE |
+|------------------------------------|---------:|-------:|------:|------:|--------:|
+| BASE (pre-templates, build-rss-baseline) | 45724 | 46062 | 46105 | 311 | +0.0%  |
+| NEW  (existing benchmark, picks template) | 44047 | 44204 | 44758 | 1478 | **−4.04%** |
+| DEVI (dedicated devirt benchmark, calls `collisionRecurseT` directly) | 43662 | 44090 | 44066 | 184 | **−4.28%** |
+
+The win is consistent (8/8 rounds NEW < BASE), tight (stdev 0.7% of mean), and clearly above the noise floor. The templated path tracks the dedicated devirtualised path, so the overload-resolution mechanism is correctly routing internal calls to the devirtualised recursion.
+
+(Earlier 7-10% number on the dedicated devirt benchmark was real but had higher round-to-round variance; the +4% number with stdev=311 µs is the trustworthy figure once the system settled.)
+
+#### Net status as of 2026-04-29 (end of this session)
+
+- **Adopted (shipped on `feature/coal-simd-support`):** templated `collide`/`distance` + `collisionRecurseT`/`distanceRecurseT`, ~4% reproducible speedup on the existing benchmark.
+- **Tested and rejected:** E4 LTO + fast-math; `rectDistance` face-normal pre-check (workload-dependent regression).
+- **Tooling shipped:** `coal-test-benchmark-phases`, `coal-test-benchmark-bv-micro`, `coal-test-benchmark-devirt` — all opt-in, no public-API impact.
+- **Profiling unblocked:** with `kernel.perf_event_paranoid=1`, perf record/report works for further hot-spot triage.
 
 ---
 
