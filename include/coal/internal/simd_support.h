@@ -48,6 +48,11 @@ COAL_DLLAPI bool isAvx2Enabled();
 COAL_DLLAPI int maxDot(const Vec3s* points, int count, const Vec3s& dir,
                        Scalar& maxdot);
 
+/// Same as maxDot, for points stored as separate x/y/z arrays.
+COAL_DLLAPI int maxDotSoA(const Scalar* xs, const Scalar* ys,
+                          const Scalar* zs, int count, const Vec3s& dir,
+                          Scalar& maxdot);
+
 }  // namespace simd
 }  // namespace details
 }  // namespace coal

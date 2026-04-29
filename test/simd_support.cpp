@@ -54,6 +54,20 @@ int scalarMaxDot(const std::vector<coal::Vec3s>& points,
   return best;
 }
 
+void splitPoints(const std::vector<coal::Vec3s>& points,
+                 std::vector<coal::Scalar>& xs,
+                 std::vector<coal::Scalar>& ys,
+                 std::vector<coal::Scalar>& zs) {
+  xs.resize(points.size());
+  ys.resize(points.size());
+  zs.resize(points.size());
+  for (std::size_t i = 0; i < points.size(); ++i) {
+    xs[i] = points[i][0];
+    ys[i] = points[i][1];
+    zs[i] = points[i][2];
+  }
+}
+
 }  // namespace
 
 BOOST_AUTO_TEST_CASE(max_dot_matches_scalar_reference) {
@@ -78,6 +92,16 @@ BOOST_AUTO_TEST_CASE(max_dot_matches_scalar_reference) {
 
     BOOST_CHECK_EQUAL(simd_hint, scalar_hint);
     BOOST_CHECK_SMALL(std::abs(simd_dot - scalar_dot), coal::Scalar(1e-4));
+
+    std::vector<coal::Scalar> xs, ys, zs;
+    splitPoints(points, xs, ys, zs);
+    coal::Scalar soa_dot;
+    const int soa_hint = coal::details::simd::maxDotSoA(
+        xs.data(), ys.data(), zs.data(), static_cast<int>(points.size()), dir,
+        soa_dot);
+
+    BOOST_CHECK_EQUAL(soa_hint, scalar_hint);
+    BOOST_CHECK_SMALL(std::abs(soa_dot - scalar_dot), coal::Scalar(1e-4));
   }
 }
 
@@ -93,4 +117,14 @@ BOOST_AUTO_TEST_CASE(max_dot_preserves_first_index_tie_breaking) {
 
   BOOST_CHECK_EQUAL(hint, 1);
   BOOST_CHECK_EQUAL(maxdot, coal::Scalar(2));
+
+  std::vector<coal::Scalar> xs, ys, zs;
+  splitPoints(points, xs, ys, zs);
+  coal::Scalar soa_maxdot;
+  const int soa_hint = coal::details::simd::maxDotSoA(
+      xs.data(), ys.data(), zs.data(), static_cast<int>(points.size()), dir,
+      soa_maxdot);
+
+  BOOST_CHECK_EQUAL(soa_hint, 1);
+  BOOST_CHECK_EQUAL(soa_maxdot, coal::Scalar(2));
 }

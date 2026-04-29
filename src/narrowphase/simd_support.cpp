@@ -65,6 +65,25 @@ int maxDotScalar(const Vec3s* points, int count, const Vec3s& dir,
   return best;
 }
 
+int maxDotSoAScalar(const Scalar* xs, const Scalar* ys, const Scalar* zs,
+                    int count, const Vec3s& dir, Scalar& maxdot) {
+  if (count <= 0) {
+    maxdot = -std::numeric_limits<Scalar>::infinity();
+    return -1;
+  }
+
+  int best = 0;
+  maxdot = xs[0] * dir[0] + ys[0] * dir[1] + zs[0] * dir[2];
+  for (int i = 1; i < count; ++i) {
+    const Scalar dot = xs[i] * dir[0] + ys[i] * dir[1] + zs[i] * dir[2];
+    if (dot > maxdot) {
+      maxdot = dot;
+      best = i;
+    }
+  }
+  return best;
+}
+
 #if defined(COAL_SIMD_SUPPORT_HAS_AVX2_TARGET)
 bool cpuSupportsAvx2() {
   __builtin_cpu_init();
@@ -84,9 +103,9 @@ __attribute__((target("avx2"))) int maxDotAvx2(const Vec3s* points, int count,
   const __m256 dy = _mm256_set1_ps(dir[1]);
   const __m256 dz = _mm256_set1_ps(dir[2]);
 
-  int best = 0;
-  maxdot = points[0].dot(dir);
-  int i = 1;
+  int best = -1;
+  maxdot = -std::numeric_limits<Scalar>::infinity();
+  int i = 0;
   alignas(32) Scalar dots[8];
   for (; i + 7 < count; i += 8) {
     const __m256 xs =
@@ -123,6 +142,50 @@ __attribute__((target("avx2"))) int maxDotAvx2(const Vec3s* points, int count,
   }
   return best;
 }
+
+__attribute__((target("avx2"))) int maxDotSoAAvx2(
+    const Scalar* xs_in, const Scalar* ys_in, const Scalar* zs_in, int count,
+    const Vec3s& dir, Scalar& maxdot) {
+  if (count <= 0) {
+    maxdot = -std::numeric_limits<Scalar>::infinity();
+    return -1;
+  }
+
+  const __m256 dx = _mm256_set1_ps(dir[0]);
+  const __m256 dy = _mm256_set1_ps(dir[1]);
+  const __m256 dz = _mm256_set1_ps(dir[2]);
+
+  int best = -1;
+  maxdot = -std::numeric_limits<Scalar>::infinity();
+  int i = 0;
+  alignas(32) Scalar dots[8];
+  for (; i + 7 < count; i += 8) {
+    const __m256 xs = _mm256_loadu_ps(xs_in + i);
+    const __m256 ys = _mm256_loadu_ps(ys_in + i);
+    const __m256 zs = _mm256_loadu_ps(zs_in + i);
+    const __m256 dot =
+        _mm256_add_ps(_mm256_add_ps(_mm256_mul_ps(xs, dx),
+                                    _mm256_mul_ps(ys, dy)),
+                      _mm256_mul_ps(zs, dz));
+    _mm256_store_ps(dots, dot);
+    for (int lane = 0; lane < 8; ++lane) {
+      if (dots[lane] > maxdot) {
+        maxdot = dots[lane];
+        best = i + lane;
+      }
+    }
+  }
+
+  for (; i < count; ++i) {
+    const Scalar dot =
+        xs_in[i] * dir[0] + ys_in[i] * dir[1] + zs_in[i] * dir[2];
+    if (dot > maxdot) {
+      maxdot = dot;
+      best = i;
+    }
+  }
+  return best;
+}
 #else
 __attribute__((target("avx2"))) int maxDotAvx2(const Vec3s* points, int count,
                                                const Vec3s& dir,
@@ -136,9 +199,9 @@ __attribute__((target("avx2"))) int maxDotAvx2(const Vec3s* points, int count,
   const __m256d dy = _mm256_set1_pd(dir[1]);
   const __m256d dz = _mm256_set1_pd(dir[2]);
 
-  int best = 0;
-  maxdot = points[0].dot(dir);
-  int i = 1;
+  int best = -1;
+  maxdot = -std::numeric_limits<Scalar>::infinity();
+  int i = 0;
   alignas(32) Scalar dots[4];
   for (; i + 3 < count; i += 4) {
     const __m256d xs = _mm256_set_pd(points[i + 3][0], points[i + 2][0],
@@ -169,6 +232,50 @@ __attribute__((target("avx2"))) int maxDotAvx2(const Vec3s* points, int count,
   }
   return best;
 }
+
+__attribute__((target("avx2"))) int maxDotSoAAvx2(
+    const Scalar* xs_in, const Scalar* ys_in, const Scalar* zs_in, int count,
+    const Vec3s& dir, Scalar& maxdot) {
+  if (count <= 0) {
+    maxdot = -std::numeric_limits<Scalar>::infinity();
+    return -1;
+  }
+
+  const __m256d dx = _mm256_set1_pd(dir[0]);
+  const __m256d dy = _mm256_set1_pd(dir[1]);
+  const __m256d dz = _mm256_set1_pd(dir[2]);
+
+  int best = -1;
+  maxdot = -std::numeric_limits<Scalar>::infinity();
+  int i = 0;
+  alignas(32) Scalar dots[4];
+  for (; i + 3 < count; i += 4) {
+    const __m256d xs = _mm256_loadu_pd(xs_in + i);
+    const __m256d ys = _mm256_loadu_pd(ys_in + i);
+    const __m256d zs = _mm256_loadu_pd(zs_in + i);
+    const __m256d dot =
+        _mm256_add_pd(_mm256_add_pd(_mm256_mul_pd(xs, dx),
+                                    _mm256_mul_pd(ys, dy)),
+                      _mm256_mul_pd(zs, dz));
+    _mm256_store_pd(dots, dot);
+    for (int lane = 0; lane < 4; ++lane) {
+      if (dots[lane] > maxdot) {
+        maxdot = dots[lane];
+        best = i + lane;
+      }
+    }
+  }
+
+  for (; i < count; ++i) {
+    const Scalar dot =
+        xs_in[i] * dir[0] + ys_in[i] * dir[1] + zs_in[i] * dir[2];
+    if (dot > maxdot) {
+      maxdot = dot;
+      best = i;
+    }
+  }
+  return best;
+}
 #endif
 #endif
 
@@ -188,6 +295,14 @@ int maxDot(const Vec3s* points, int count, const Vec3s& dir, Scalar& maxdot) {
   if (isAvx2Enabled()) return maxDotAvx2(points, count, dir, maxdot);
 #endif
   return maxDotScalar(points, count, dir, maxdot);
+}
+
+int maxDotSoA(const Scalar* xs, const Scalar* ys, const Scalar* zs, int count,
+              const Vec3s& dir, Scalar& maxdot) {
+#if defined(COAL_SIMD_SUPPORT_HAS_AVX2_TARGET)
+  if (isAvx2Enabled()) return maxDotSoAAvx2(xs, ys, zs, count, dir, maxdot);
+#endif
+  return maxDotSoAScalar(xs, ys, zs, count, dir, maxdot);
 }
 
 }  // namespace simd
