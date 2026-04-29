@@ -516,9 +516,28 @@ The wider gain on phase-benchmark cells vs the main benchmark is consistent with
 #### Net status as of 2026-04-29 (end of this session)
 
 - **Adopted (shipped on `feature/coal-simd-support`):** templated `collide`/`distance` + `collisionRecurseT`/`distanceRecurseT`, ~4% reproducible speedup on the existing benchmark.
-- **Tested and rejected:** E4 LTO + fast-math; `rectDistance` face-normal pre-check (workload-dependent regression).
+- **Tested and rejected:** E4 LTO + fast-math; `rectDistance` face-normal pre-check (workload-dependent regression); Eigen `SelfAdjointEigenSolver::computeDirect` as a replacement for the Jacobi 3×3 sym-eigen in `tools.h::eigen()` (25.6% **regression** — see below).
 - **Tooling shipped:** `coal-test-benchmark-phases`, `coal-test-benchmark-bv-micro`, `coal-test-benchmark-devirt` — all opt-in, no public-API impact.
 - **Profiling unblocked:** with `kernel.perf_event_paranoid=1`, perf record/report works for further hot-spot triage.
+
+#### Attempted optimization — Eigen `computeDirect` for `tools.h::eigen()` — 2026-04-29 — **NOT ADOPTED**
+
+**Hypothesis:** the perf profile shows `coal::eigen<...>` (the iterative Jacobi 3×3 sym-eigen in `include/coal/internal/tools.h`) at 13.36% of total benchmark runtime. Replacing it with `Eigen::SelfAdjointEigenSolver::computeDirect()` (a Cardano-based closed-form path, well-tested) should be faster since closed-form generally beats iterative for 3×3.
+
+**Result** (6 interleaved rounds, taskset CPU 4):
+
+| Build              | median (µs) | mean    |
+|--------------------|------------:|--------:|
+| BASE  (Jacobi)     |       44190 |   44189 |
+| NEW   (computeDirect) | 55432   |   55519 |
+
+**+25.6% regression.**
+
+**Diagnosis:** for the 3×3 covariance matrices produced by BVH build, the Jacobi sweep early-exits after 1-3 iterations because the matrices are well-conditioned (real-mesh covariances have small off-diagonals). The early-exit branch (`if (sm == 0.0)` at the top of each sweep) saves the bulk of the work in 50-iteration loop. Eigen's `computeDirect` does the full Cardano + eigenvector normalization + iterative refinement unconditionally.
+
+**Lesson:** "closed-form is faster than iterative" is a misleading heuristic when the iterative path can converge in O(1) sweeps and has fast early-exit. The Jacobi here is doing about 30-90 flops on the common path, vs Eigen's ~200-400 flops with constructor overhead.
+
+**Decision:** Reverted in working tree. The 13.36% perf slot is unlikely to yield to drop-in replacement; would require either a bespoke Cardano path tuned to the early-exit pattern or to skip the eigen call entirely (e.g., re-use parent-node axes).
 
 ---
 
