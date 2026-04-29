@@ -66,6 +66,7 @@ set(
   broadphase/detail/morton.cpp
   narrowphase/gjk.cpp
   narrowphase/minkowski_difference.cpp
+  narrowphase/simd_support.cpp
   narrowphase/support_functions.cpp
   narrowphase/details.h
   shape/geometric_shapes.cpp
@@ -199,6 +200,10 @@ endif()
 if(COAL_BUILD_WITH_TRACY)
   target_compile_definitions(${LIBRARY_NAME} PUBLIC COAL_TRACY_ENABLE)
   target_link_libraries(${LIBRARY_NAME} PUBLIC Tracy::TracyClient)
+endif()
+
+if(COAL_ENABLE_SIMD)
+  target_compile_definitions(${LIBRARY_NAME} PRIVATE COAL_ENABLE_SIMD)
 endif()
 
 if(WIN32)

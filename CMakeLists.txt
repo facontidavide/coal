@@ -80,6 +80,11 @@ option(
   "Build with tracy profiler for performance analysis"
   FALSE
 )
+option(
+  COAL_ENABLE_SIMD
+  "Enable internal SIMD acceleration paths when supported by the compiler and CPU."
+  TRUE
+)
 
 # Check if the submodule cmake have been initialized
 set(JRL_CMAKE_MODULES "${CMAKE_CURRENT_LIST_DIR}/cmake")
@@ -310,6 +315,7 @@ set(
   include/coal/internal/shape_shape_contact_patch_func.h
   include/coal/internal/intersect.h
   include/coal/internal/intersect.hxx
+  include/coal/internal/simd_support.h
   include/coal/internal/tools.h
   include/coal/internal/traversal_node_base.h
   include/coal/internal/traversal_node_bvh_shape.h
