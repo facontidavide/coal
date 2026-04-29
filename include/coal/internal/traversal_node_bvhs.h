@@ -409,10 +409,6 @@ class MeshDistanceTraversalNode : public BVHDistanceTraversalNode<BV> {
     abs_err = this->request.abs_err;
   }
 
-  void preprocess() {
-    if (!RTIsIdentity) preprocessOrientedNode();
-  }
-
   void postprocess() {
     if (!RTIsIdentity) postprocessOrientedNode();
   }
@@ -492,31 +488,6 @@ class MeshDistanceTraversalNode : public BVHDistanceTraversalNode<BV> {
   details::RelativeTransformation<!bool(RTIsIdentity)> RT;
 
  private:
-  void preprocessOrientedNode() {
-    const int init_tri_id1 = 0, init_tri_id2 = 0;
-    const Triangle32& init_tri1 = tri_indices1[init_tri_id1];
-    const Triangle32& init_tri2 = tri_indices2[init_tri_id2];
-
-    Vec3s init_tri1_points[3];
-    Vec3s init_tri2_points[3];
-
-    init_tri1_points[0] = vertices1[init_tri1[0]];
-    init_tri1_points[1] = vertices1[init_tri1[1]];
-    init_tri1_points[2] = vertices1[init_tri1[2]];
-
-    init_tri2_points[0] = vertices2[init_tri2[0]];
-    init_tri2_points[1] = vertices2[init_tri2[1]];
-    init_tri2_points[2] = vertices2[init_tri2[2]];
-
-    Vec3s p1, p2, normal(Vec3s::Zero());
-    Scalar distance = sqrt(TriangleDistance::sqrTriDistance(
-        init_tri1_points[0], init_tri1_points[1], init_tri1_points[2],
-        init_tri2_points[0], init_tri2_points[1], init_tri2_points[2], RT._R(),
-        RT._T(), p1, p2));
-
-    result->update(distance, model1, model2, init_tri_id1, init_tri_id2, p1, p2,
-                   normal);
-  }
   void postprocessOrientedNode() {
     /// the points obtained by triDistance are not in world space: both are in
     /// object1's local coordinate system, so we need to convert them into the
