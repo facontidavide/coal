@@ -498,6 +498,21 @@ The win is consistent (8/8 rounds NEW < BASE), tight (stdev 0.7% of mean), and c
 
 (Earlier 7-10% number on the dedicated devirt benchmark was real but had higher round-to-round variance; the +4% number with stdev=311 µs is the trustworthy figure once the system settled.)
 
+**Cross-workload validation (4 rounds, all phase-benchmark cells)**: every cell improved between 4.4% and 14.0%; no regressions. Headline numbers from the phase benchmark (which has `enable_statistics=true` so per-test overhead is slightly inflated):
+
+| Workload                               | BV     | op       | Δ      |
+|----------------------------------------|:------:|:--------:|-------:|
+| env-vs-rob wide RSS                    | RSS    | collide  | −7.8%  |
+| env-vs-rob med RSS                     | RSS    | collide  | −13.4% |
+| env-vs-rob med kIOS                    | kIOS   | distance | −10.6% |
+| rob-vs-rob 100 RSS                     | RSS    | collide  | −6.1%  |
+| rob-vs-rob 100 kIOS                    | kIOS   | distance | −13.3% |
+| rob-vs-rob 600 OBBRSS                  | OBBRSS | collide  | −9.6%  |
+| synthetic dense OBBRSS                 | OBBRSS | collide  | −14.0% |
+| pathological self-vs-self RSS distance | RSS    | distance | −6.8%  |
+
+The wider gain on phase-benchmark cells vs the main benchmark is consistent with phase-benchmark queries being heavier (6-16 BV tests per query vs ~3 for the main benchmark's broad-phase-dominated workload). On a per-BV-test basis the savings track the eliminated 9 virtual dispatches.
+
 #### Net status as of 2026-04-29 (end of this session)
 
 - **Adopted (shipped on `feature/coal-simd-support`):** templated `collide`/`distance` + `collisionRecurseT`/`distanceRecurseT`, ~4% reproducible speedup on the existing benchmark.
