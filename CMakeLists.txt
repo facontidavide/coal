@@ -90,6 +90,11 @@ option(
   "When SIMD is enabled, compile Coal with native CPU SIMD architecture flags."
   TRUE
 )
+option(
+  COAL_ENABLE_NO_SEMANTIC_INTERPOSITION
+  "When SIMD/native optimization is enabled, compile Coal with -fno-semantic-interposition on supported ELF compilers."
+  TRUE
+)
 set(
   COAL_SIMD_ARCH_FLAGS
   "auto"
