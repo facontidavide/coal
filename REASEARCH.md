@@ -693,3 +693,42 @@ Key VAMP source landmarks (under `/home/davide/Asensus/meshopt/vamp/src/impl/vam
 - `collision/environment.hh:14-69` — typed obstacle collections, sorted by `min_distance`.
 - `collision/math.hh:17-42` — `dot_3`, `sql2_3`.
 - `cmake/CompilerSettings.cmake:22-58` — fast-math + LTO setup.
+
+## 9. Negative result: OBB SAT within-pair 3-wide vectorization (2026-04-29)
+
+**Hypothesis (E3 variant).** Replace the 3 calls to `obbDisjoint_check_Ai_cross_Bi<{0,1,2}>` per outer `ia` iteration with a single batched function that computes all 3 ib values in parallel via Eigen `Array<Scalar, 3, 1>`. Predicted 5-10% on `obbDisjointAndLowerBoundDistance` (17.65% of cycles), so ~1-2% total wall-clock.
+
+**Implementation.** New helper `obbDisjoint_check_Ai_cross_Bi_batch3` in `src/BV/OBB.cpp` wraps the per-ia work as Eigen array ops:
+- `Bf_row = Bf.row(ia).array()` cached
+- `sinus2 = 1 - Bf_row.square()` (3-wide subtract)
+- `s = T[ka] * B.row(ja) - T[ja] * B.row(ka)` (3-wide FMA)
+- `a_term = a[ja]*Bf.row(ka) + a[ka]*Bf.row(ja)` (3-wide FMA)
+- `b_term`: cyclic permutation, written as 3 explicit assignments
+- `diff = |s| - a_term - b_term` (3-wide subtract)
+- Per-ib check loop (preserves 1e-6 sinus2 guard and breakDistance2 early-exit semantics)
+
+**Per-pose CSV outputs identical** to scalar baseline across all 5 polso/gen4 manifests — correctness preserved.
+
+**Result on polso/gen4 (interleaved 7-run median, P-core pinned, isolated worktrees /tmp/coal-obbsat with separate libcoal.so per variant):**
+
+| Joint  | Baseline | SIMD-3 |  Δ    |
+|--------|----------|--------|-------|
+| J4-J5  | 1188.79  | 1192.55| +0.3% |
+| J5-J6  | 4604.24  | 4609.62| +0.1% |
+| J6-J7  | 2803.08  | 2800.31| -0.1% |
+| J7     | 1097.31  | 1088.42| -0.8% |
+| Nose   | 5993.04  | 6010.64| +0.3% |
+
+All differences within ±1% — **below the run-to-run noise floor of ~1-2%**. **No measurable speedup.**
+
+**Why it didn't pay.** Disassembly of the new helper shows the compiler emits 2-wide SSE (`vmulpd %xmm`), not 4-wide AVX2 (`vmulpd %ymm`), because Eigen `Array<Scalar,3,1>` isn't padded to 32-byte-aligned 4-wide. The 2-wide SIMD over 3 elements (with one scalar tail) doesn't beat the original tight scalar code that the compiler had already unrolled and optimized via the templated `obbDisjoint_check_Ai_cross_Bi<ib>` specialization.
+
+**Broader lesson for E3 alternative B (cross-pair batching).** The within-pair 3-wide approach was the cheap test. Its 0% wall-clock gain suggests cross-pair batching (4-8 BV pairs at once) would also struggle: the cost per BV pair is dominated by the 6-7 scalar `Bf` accesses and 4-5 FMA ops, not by the 9-axis loop structure. **Defer cross-pair batching too** unless a profile of a different workload reveals OBB SAT as a much larger fraction of cycles.
+
+**Eytzinger flat BVH layout (E2)** was investigated in parallel (separate Explore agent in worktree). Strongly rejected on first principles: realistic ceiling 2-5%, high refactor + refit complexity, and the 4% from devirtualization (commit `c030c3d7`) already covered the dispatch overhead this would target. The 0% empirical result on OBB SAT here reinforces that small per-BV optimizations can't reach measurable wall-clock at this point in the optimization curve.
+
+**Better follow-ups identified by the Explore agents:**
+- `rectDistance` scalar micro-optimizations on the Voronoi-region branches (5-10% on RSS-using BVs, lower risk than SIMD).
+- `_mm_prefetch` hints on the next BV pair before the current SAT test completes (5-10% on cache-bound queries, trivial code change).
+
+**Files touched** (in worktree only, not merged): `/tmp/coal-obbsat/src/BV/OBB.cpp` lines 312-389. Worktree at branch `experiment/obb-sat-simd`.
